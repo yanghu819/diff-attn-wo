@@ -19,6 +19,7 @@ STATE_PATH = RESEARCH_DIR / "state.json"
 RESULTS_PATH = RESEARCH_DIR / "diff_results.tsv"
 BEST_PATH = RESEARCH_DIR / "current_best.md"
 PID_PATH = RESEARCH_DIR / "runner.pid"
+LOCK_PATH = RESEARCH_DIR / "runner.lock"
 
 CONFIG_KEYS = [
     "USE_DIFF_ATTN",
@@ -43,6 +44,33 @@ MAX_COMPILE_RETRIES = 1
 
 def now_iso():
     return datetime.now().isoformat(timespec="seconds")
+
+
+def pid_is_alive(pid):
+    try:
+        os.kill(pid, 0)
+    except OSError:
+        return False
+    return True
+
+
+def acquire_lock():
+    RESEARCH_DIR.mkdir(exist_ok=True)
+    while True:
+        try:
+            fd = os.open(LOCK_PATH, os.O_CREAT | os.O_EXCL | os.O_WRONLY)
+        except FileExistsError:
+            try:
+                holder = int(LOCK_PATH.read_text().strip())
+            except (OSError, ValueError):
+                holder = None
+            if holder and pid_is_alive(holder):
+                raise RuntimeError(f"runner lock is already held by pid {holder}")
+            LOCK_PATH.unlink(missing_ok=True)
+            continue
+        with os.fdopen(fd, "w") as handle:
+            handle.write(f"{os.getpid()}\n")
+        return
 
 
 def format_literal(value):
@@ -408,6 +436,7 @@ def main():
 
     current_config = read_current_config()
     ensure_research_files(current_config)
+    acquire_lock()
     state = load_state()
     state["best"]["config"] = merge_config(state["best"]["config"], current_config)
     if "deadline_at" not in state or not state["deadline_at"]:
@@ -489,6 +518,7 @@ def main():
             write_config(load_state()["best"]["config"])
         except Exception:
             pass
+        LOCK_PATH.unlink(missing_ok=True)
         PID_PATH.unlink(missing_ok=True)
 
 
