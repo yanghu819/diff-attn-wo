@@ -2,8 +2,10 @@
 import base64
 import json
 import os
+import ssl
 import subprocess
 import sys
+import time
 import urllib.error
 import urllib.parse
 import urllib.request
@@ -11,6 +13,7 @@ from pathlib import Path
 
 
 ROOT = Path(__file__).resolve().parents[1]
+API_RETRIES = 5
 
 
 def sh(args):
@@ -39,20 +42,32 @@ def parse_origin():
 
 
 def api(method, url, token, payload=None):
-    data = None if payload is None else json.dumps(payload).encode("utf-8")
-    req = urllib.request.Request(url, data=data, method=method)
-    req.add_header("Authorization", f"Bearer {token}")
-    req.add_header("Accept", "application/vnd.github+json")
-    req.add_header("X-GitHub-Api-Version", "2022-11-28")
-    if data is not None:
-        req.add_header("Content-Type", "application/json")
-    try:
-        with urllib.request.urlopen(req, timeout=120) as resp:
-            body = resp.read().decode("utf-8")
-            return json.loads(body) if body else None
-    except urllib.error.HTTPError as exc:
-        body = exc.read().decode("utf-8", "replace")
-        raise RuntimeError(f"GitHub API {method} {url} -> {exc.code}: {body}") from exc
+    last_error = None
+    for attempt in range(1, API_RETRIES + 1):
+        data = None if payload is None else json.dumps(payload).encode("utf-8")
+        req = urllib.request.Request(url, data=data, method=method)
+        req.add_header("Authorization", f"Bearer {token}")
+        req.add_header("Accept", "application/vnd.github+json")
+        req.add_header("X-GitHub-Api-Version", "2022-11-28")
+        req.add_header("Connection", "close")
+        if data is not None:
+            req.add_header("Content-Type", "application/json")
+        try:
+            with urllib.request.urlopen(req, timeout=120) as resp:
+                body = resp.read().decode("utf-8")
+                return json.loads(body) if body else None
+        except urllib.error.HTTPError as exc:
+            body = exc.read().decode("utf-8", "replace")
+            if exc.code in {429, 500, 502, 503, 504} and attempt < API_RETRIES:
+                time.sleep(2 ** (attempt - 1))
+                continue
+            raise RuntimeError(f"GitHub API {method} {url} -> {exc.code}: {body}") from exc
+        except (urllib.error.URLError, TimeoutError, ssl.SSLError, OSError) as exc:
+            last_error = exc
+            if attempt >= API_RETRIES:
+                break
+            time.sleep(2 ** (attempt - 1))
+    raise RuntimeError(f"GitHub API {method} {url} failed after {API_RETRIES} retries: {last_error}")
 
 
 def tracked_files():
