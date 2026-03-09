@@ -1,3 +1,4 @@
 timestamp	commit	val_bpb	memory_gb	num_steps	status	description	log_file
 20260309_212135	baa11cd	2.108036	11.3	150	discard	layers=1, lam=-2.25, wo_scale=0.1, blend=1.0, y2norm=False, batch=2**15	research/runs/20260309_212135_l1_lamm2p25_wo0p1_b1p0_n0_tb32768.log
 20260309_212946	27fd018	2.348304	11.3	80	discard	layers=1, lam=-1.75, wo_scale=0.1, blend=1.0, y2norm=False, batch=2**15	research/runs/20260309_212946_l1_lamm1p75_wo0p1_b1p0_n0_tb32768.log
+20260309_214529	ba8a290	2.081348	11.3	167	discard	layers=1, lam=-2.0, wo_scale=0.08, lam_max=1.0, blend=1.0, q2_scale=1.0, y2norm=False, y2center=False, batch=2**15	research/runs/20260309_214529_l1_lamm2p0_wo0p08_lm1p0_b1p0_qs1p0_n0_c0_tb32768.log
