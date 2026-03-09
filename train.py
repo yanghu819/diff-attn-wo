@@ -34,6 +34,8 @@ class GPTConfig:
     diff_attn_lambda_init: float = -2.0
     diff_attn_wo_init: str = "zero"
     diff_attn_wo_init_scale: float = 0.1
+    diff_attn_q2_blend: float = 1.0
+    diff_attn_y2_norm: bool = False
 
 
 def norm(x):
@@ -71,6 +73,8 @@ class CausalSelfAttention(nn.Module):
         self.n_embd = config.n_embd
         self.use_diff_attn = config.use_diff_attn and layer_idx >= config.n_layer - config.diff_attn_last_layers
         self.diff_attn_q2_source = config.diff_attn_q2_source
+        self.diff_attn_q2_blend = config.diff_attn_q2_blend
+        self.diff_attn_y2_norm = config.diff_attn_y2_norm
         self.head_dim = self.n_embd // self.n_head
         assert self.n_embd % self.n_head == 0
         assert self.n_kv_head <= self.n_head and self.n_head % self.n_kv_head == 0
@@ -99,6 +103,8 @@ class CausalSelfAttention(nn.Module):
         batch_size, seq_len, _ = x.shape
         q = self.c_q(x).reshape(batch_size, seq_len, self.n_head, self.head_dim)
         q2 = self._project_q2(x) if self.use_diff_attn else None
+        if q2 is not None and self.diff_attn_q2_blend < 1.0:
+            q2 = self.diff_attn_q2_blend * q2 + (1.0 - self.diff_attn_q2_blend) * q
         k = self.c_k(x).reshape(batch_size, seq_len, self.n_kv_head, self.head_dim)
         v = self.c_v(x).reshape(batch_size, seq_len, self.n_kv_head, self.head_dim)
 
@@ -123,6 +129,8 @@ class CausalSelfAttention(nn.Module):
         if q2 is not None:
             lam = mx.sigmoid(self.diff_lambda(x).astype(mx.float32)).transpose(0, 2, 1)[..., None]
             y2 = mx.fast.scaled_dot_product_attention(q2, k, v, scale=scale, mask=mask)
+            if self.diff_attn_y2_norm:
+                y2 = norm(y2)
             y = y - lam * y2
         y = y.transpose(0, 2, 1, 3).reshape(batch_size, seq_len, -1)
         return self.c_proj(y)
@@ -411,6 +419,8 @@ DIFF_ATTN_Q2_SOURCE = "wo"
 DIFF_ATTN_LAMBDA_INIT = -2.0
 DIFF_ATTN_WO_INIT = "small_random"
 DIFF_ATTN_WO_INIT_SCALE = 0.1
+DIFF_ATTN_Q2_BLEND = 1.0
+DIFF_ATTN_Y2_NORM = False
 
 # v0.1: AdamW only. Muon port is future work.
 TOTAL_BATCH_SIZE = 2**15
@@ -485,6 +495,8 @@ config = GPTConfig(
     diff_attn_lambda_init=DIFF_ATTN_LAMBDA_INIT,
     diff_attn_wo_init=DIFF_ATTN_WO_INIT,
     diff_attn_wo_init_scale=DIFF_ATTN_WO_INIT_SCALE,
+    diff_attn_q2_blend=DIFF_ATTN_Q2_BLEND,
+    diff_attn_y2_norm=DIFF_ATTN_Y2_NORM,
 )
 
 model = GPT(config)
@@ -608,3 +620,5 @@ print(f"diff_last_layers: {DIFF_ATTN_LAST_LAYERS}")
 print(f"diff_q2_source:   {DIFF_ATTN_Q2_SOURCE}")
 print(f"diff_wo_init:     {DIFF_ATTN_WO_INIT}")
 print(f"diff_wo_scale:    {DIFF_ATTN_WO_INIT_SCALE}")
+print(f"diff_q2_blend:    {DIFF_ATTN_Q2_BLEND}")
+print(f"diff_y2_norm:     {DIFF_ATTN_Y2_NORM}")
