@@ -1,18 +1,18 @@
 {
   "started_at": "2026-03-09T21:19:37",
   "deadline_at": "2026-03-10T07:19:37",
-  "run_count": 3,
+  "run_count": 4,
   "best": {
-    "val_bpb": 2.078972,
-    "memory_gb": 11.3,
-    "num_steps": 144,
+    "val_bpb": 2.065106,
+    "memory_gb": 11.3390625,
+    "num_steps": 167,
     "config": {
       "USE_DIFF_ATTN": true,
       "DIFF_ATTN_LAST_LAYERS": 1,
       "DIFF_ATTN_Q2_SOURCE": "wo",
       "DIFF_ATTN_LAMBDA_INIT": -2.0,
       "DIFF_ATTN_WO_INIT": "small_random",
-      "DIFF_ATTN_WO_INIT_SCALE": 0.1,
+      "DIFF_ATTN_WO_INIT_SCALE": 0.12,
       "DIFF_ATTN_LAMBDA_MAX": 1.0,
       "DIFF_ATTN_Q2_BLEND": 1.0,
       "DIFF_ATTN_Q2_SCALE": 1.0,
@@ -20,23 +20,24 @@
       "DIFF_ATTN_Y2_CENTER_HEADS": false,
       "TOTAL_BATCH_SIZE": 32768
     },
-    "description": "layers=1, lam=-2.0, wo_scale=0.1, blend=1.0, y2norm=False, batch=2**15"
+    "description": "layers=1, lam=-2.0, wo_scale=0.12, lam_max=1.0, blend=1.0, q2_scale=1.0, y2norm=False, y2center=False, batch=2**15"
   },
   "seen": [
     "USE_DIFF_ATTN=True|DIFF_ATTN_LAST_LAYERS=1|DIFF_ATTN_Q2_SOURCE=wo|DIFF_ATTN_LAMBDA_INIT=-2.25|DIFF_ATTN_WO_INIT=small_random|DIFF_ATTN_WO_INIT_SCALE=0.1|DIFF_ATTN_LAMBDA_MAX=1.0|DIFF_ATTN_Q2_BLEND=1.0|DIFF_ATTN_Q2_SCALE=1.0|DIFF_ATTN_Y2_NORM=False|DIFF_ATTN_Y2_CENTER_HEADS=False|TOTAL_BATCH_SIZE=32768",
     "USE_DIFF_ATTN=True|DIFF_ATTN_LAST_LAYERS=1|DIFF_ATTN_Q2_SOURCE=wo|DIFF_ATTN_LAMBDA_INIT=-1.75|DIFF_ATTN_WO_INIT=small_random|DIFF_ATTN_WO_INIT_SCALE=0.1|DIFF_ATTN_LAMBDA_MAX=1.0|DIFF_ATTN_Q2_BLEND=1.0|DIFF_ATTN_Q2_SCALE=1.0|DIFF_ATTN_Y2_NORM=False|DIFF_ATTN_Y2_CENTER_HEADS=False|TOTAL_BATCH_SIZE=32768",
-    "USE_DIFF_ATTN=True|DIFF_ATTN_LAST_LAYERS=1|DIFF_ATTN_Q2_SOURCE=wo|DIFF_ATTN_LAMBDA_INIT=-2.0|DIFF_ATTN_WO_INIT=small_random|DIFF_ATTN_WO_INIT_SCALE=0.08|DIFF_ATTN_LAMBDA_MAX=1.0|DIFF_ATTN_Q2_BLEND=1.0|DIFF_ATTN_Q2_SCALE=1.0|DIFF_ATTN_Y2_NORM=False|DIFF_ATTN_Y2_CENTER_HEADS=False|TOTAL_BATCH_SIZE=32768"
+    "USE_DIFF_ATTN=True|DIFF_ATTN_LAST_LAYERS=1|DIFF_ATTN_Q2_SOURCE=wo|DIFF_ATTN_LAMBDA_INIT=-2.0|DIFF_ATTN_WO_INIT=small_random|DIFF_ATTN_WO_INIT_SCALE=0.08|DIFF_ATTN_LAMBDA_MAX=1.0|DIFF_ATTN_Q2_BLEND=1.0|DIFF_ATTN_Q2_SCALE=1.0|DIFF_ATTN_Y2_NORM=False|DIFF_ATTN_Y2_CENTER_HEADS=False|TOTAL_BATCH_SIZE=32768",
+    "USE_DIFF_ATTN=True|DIFF_ATTN_LAST_LAYERS=1|DIFF_ATTN_Q2_SOURCE=wo|DIFF_ATTN_LAMBDA_INIT=-2.0|DIFF_ATTN_WO_INIT=small_random|DIFF_ATTN_WO_INIT_SCALE=0.12|DIFF_ATTN_LAMBDA_MAX=1.0|DIFF_ATTN_Q2_BLEND=1.0|DIFF_ATTN_Q2_SCALE=1.0|DIFF_ATTN_Y2_NORM=False|DIFF_ATTN_Y2_CENTER_HEADS=False|TOTAL_BATCH_SIZE=32768"
   ],
   "last_result": {
-    "timestamp": "20260309_214529",
-    "status": "discard",
-    "description": "layers=1, lam=-2.0, wo_scale=0.08, lam_max=1.0, blend=1.0, q2_scale=1.0, y2norm=False, y2center=False, batch=2**15",
-    "log_path": "research/runs/20260309_214529_l1_lamm2p0_wo0p08_lm1p0_b1p0_qs1p0_n0_c0_tb32768.log",
+    "timestamp": "20260309_215539",
+    "status": "keep",
+    "description": "layers=1, lam=-2.0, wo_scale=0.12, lam_max=1.0, blend=1.0, q2_scale=1.0, y2norm=False, y2center=False, batch=2**15",
+    "log_path": "research/runs/20260309_215539_l1_lamm2p0_wo0p12_lm1p0_b1p0_qs1p0_n0_c0_tb32768.log",
     "metrics": {
-      "val_bpb": 2.081348,
+      "val_bpb": 2.065106,
       "memory_gb": 11.3390625,
       "num_steps": 167,
-      "compile_seconds": 2.0
+      "compile_seconds": 2.1
     }
   }
 }
