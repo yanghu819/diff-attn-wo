@@ -11,15 +11,15 @@ issues=0
 
 echo "[health] root: $ROOT"
 
-if screen -ls | /usr/bin/grep -qF ".$SESSION_NAME"; then
+if screen -ls | /usr/bin/grep -q "$SESSION_NAME"; then
   echo "[health] screen: ok ($SESSION_NAME)"
 else
   echo "[health] screen: missing ($SESSION_NAME)"
   issues=1
 fi
 
-supervisor_count=$(pgrep -fc '/Users/hy3/Desktop/diff-attn-wo/research/supervise_10h.sh' || true)
-runner_count=$(pgrep -fc '/Users/hy3/Desktop/diff-attn-wo/.venv/bin/python3 research/diff_research_runner.py' || true)
+supervisor_count=$(pgrep -fl '/Users/hy3/Desktop/diff-attn-wo/research/supervise_10h.sh' | wc -l | tr -d ' ')
+runner_count=$(pgrep -fl '/Users/hy3/Desktop/diff-attn-wo/.venv/bin/python3 research/diff_research_runner.py' | wc -l | tr -d ' ')
 echo "[health] supervisor_count: $supervisor_count"
 echo "[health] runner_count: $runner_count"
 if [ "$supervisor_count" -lt 1 ] || [ "$runner_count" -lt 1 ]; then

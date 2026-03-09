@@ -39,9 +39,9 @@ PY
     cd "$ROOT"
     set +e
     uv run python research/diff_research_runner.py --hours "$HOURS" >>"$RUNNER_LOG" 2>&1
-    status=$?
+    exit_code=$?
     set -e
-    echo "[supervisor] runner exited with status $status at $(date '+%F %T')"
+    echo "[supervisor] runner exited with status $exit_code at $(date '+%F %T')"
     if deadline_reached; then
       echo "[supervisor] deadline reached after runner exit"
       break

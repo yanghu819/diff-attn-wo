@@ -3,6 +3,8 @@
 __pycache__/
 *.pyc
 *.log
+research/runner.pid
+research/runner.lock
 run.log
 surfaces.txt
 surface-verify-prompt.md
