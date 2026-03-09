@@ -1,5 +1,6 @@
 #!/usr/bin/env python3
 import argparse
+import ast
 import json
 import os
 import random
@@ -24,11 +25,14 @@ LOCK_PATH = RESEARCH_DIR / "runner.lock"
 CONFIG_KEYS = [
     "USE_DIFF_ATTN",
     "DIFF_ATTN_LAST_LAYERS",
+    "DIFF_ATTN_LAYER_MASK",
     "DIFF_ATTN_Q2_SOURCE",
     "DIFF_ATTN_LAMBDA_INIT",
     "DIFF_ATTN_WO_INIT",
     "DIFF_ATTN_WO_INIT_SCALE",
     "DIFF_ATTN_LAMBDA_MAX",
+    "DIFF_ATTN_LAMBDA_WEIGHT_INIT",
+    "DIFF_ATTN_LAMBDA_WEIGHT_INIT_SCALE",
     "DIFF_ATTN_Q2_BLEND",
     "DIFF_ATTN_Q2_SCALE",
     "DIFF_ATTN_Y2_NORM",
@@ -40,10 +44,24 @@ DEFAULT_BEST_VAL_BPB = 2.078972
 RUN_TIMEOUT_SECONDS = 15 * 60
 MAX_COMPILE_SECONDS = 10.0
 MAX_COMPILE_RETRIES = 1
+SIGNIFICANT_SINGLE_LAYER_GAIN = 0.01
+PRIMARY_LAM_SWEEP = [-2.25, -2.0, -1.75]
+PRIMARY_LAMBDA_MAX_SWEEP = [0.75, 0.9, 0.5]
+PRIMARY_Q2_SCALE_SWEEP = [0.85, 1.15, 0.75, 1.25]
+DEFAULT_TOTAL_BATCH_SIZE = 2**15
 
 
 def now_iso():
     return datetime.now().isoformat(timespec="seconds")
+
+
+def parse_scalar_literal(raw):
+    if raw in {"True", "False"}:
+        return raw == "True"
+    try:
+        return ast.literal_eval(raw)
+    except Exception:
+        return raw
 
 
 def pid_is_alive(pid):
@@ -129,18 +147,54 @@ def merge_config(config, fallback):
     return {key: merged[key] for key in CONFIG_KEYS}
 
 
+def ordered_unique(items):
+    output = []
+    seen = set()
+    for item in items:
+        marker = repr(item)
+        if marker in seen:
+            continue
+        seen.add(marker)
+        output.append(item)
+    return output
+
+
+def set_diff_layers(config, last_layers=None, layer_mask=None):
+    updated = dict(config)
+    if layer_mask is not None:
+        updated["DIFF_ATTN_LAYER_MASK"] = layer_mask
+        if layer_mask:
+            updated["DIFF_ATTN_LAST_LAYERS"] = 0
+    if last_layers is not None:
+        updated["DIFF_ATTN_LAST_LAYERS"] = last_layers
+        if last_layers > 0:
+            updated["DIFF_ATTN_LAYER_MASK"] = ""
+    return updated
+
+
 def config_fingerprint(config):
     parts = [f"{key}={config[key]}" for key in CONFIG_KEYS]
     return "|".join(parts)
+
+
+def parse_fingerprint(fingerprint):
+    config = {}
+    for piece in fingerprint.split("|"):
+        key, value = piece.split("=", 1)
+        config[key] = parse_scalar_literal(value)
+    return config
 
 
 def config_description(config):
     batch_power = int(round(config["TOTAL_BATCH_SIZE"]).bit_length() - 1)
     pieces = [
         f"layers={config['DIFF_ATTN_LAST_LAYERS']}",
+        f"mask={config['DIFF_ATTN_LAYER_MASK'] or '<last>'}",
         f"lam={config['DIFF_ATTN_LAMBDA_INIT']}",
         f"wo_scale={config['DIFF_ATTN_WO_INIT_SCALE']}",
         f"lam_max={config['DIFF_ATTN_LAMBDA_MAX']}",
+        f"lam_w_init={config['DIFF_ATTN_LAMBDA_WEIGHT_INIT']}",
+        f"lam_w_scale={config['DIFF_ATTN_LAMBDA_WEIGHT_INIT_SCALE']}",
         f"blend={config['DIFF_ATTN_Q2_BLEND']}",
         f"q2_scale={config['DIFF_ATTN_Q2_SCALE']}",
         f"y2norm={config['DIFF_ATTN_Y2_NORM']}",
@@ -153,9 +207,12 @@ def config_description(config):
 def make_slug(config):
     return (
         f"l{config['DIFF_ATTN_LAST_LAYERS']}"
+        f"_mask{config['DIFF_ATTN_LAYER_MASK'].replace(',', '-') if config['DIFF_ATTN_LAYER_MASK'] else 'last'}"
         f"_lam{str(config['DIFF_ATTN_LAMBDA_INIT']).replace('.', 'p').replace('-', 'm')}"
         f"_wo{str(config['DIFF_ATTN_WO_INIT_SCALE']).replace('.', 'p')}"
         f"_lm{str(config['DIFF_ATTN_LAMBDA_MAX']).replace('.', 'p')}"
+        f"_lwi{config['DIFF_ATTN_LAMBDA_WEIGHT_INIT']}"
+        f"_lws{str(config['DIFF_ATTN_LAMBDA_WEIGHT_INIT_SCALE']).replace('.', 'p')}"
         f"_b{str(config['DIFF_ATTN_Q2_BLEND']).replace('.', 'p')}"
         f"_qs{str(config['DIFF_ATTN_Q2_SCALE']).replace('.', 'p')}"
         f"_n{int(config['DIFF_ATTN_Y2_NORM'])}"
@@ -195,6 +252,58 @@ def load_state():
     return json.loads(STATE_PATH.read_text())
 
 
+def count_diff_layers(config):
+    mask = str(config.get("DIFF_ATTN_LAYER_MASK", "")).strip()
+    if mask:
+        return len([piece for piece in mask.split(",") if piece.strip()])
+    return int(config["DIFF_ATTN_LAST_LAYERS"])
+
+
+def is_expensive(config):
+    return config["TOTAL_BATCH_SIZE"] == 2**14 or count_diff_layers(config) >= 2
+
+
+def expensive_budget_available(state):
+    seen_configs = [parse_fingerprint(item) for item in state.get("seen", [])]
+    expensive_count = sum(1 for config in seen_configs if is_expensive(config))
+    total_count = len(seen_configs)
+    return (expensive_count + 1) * 5 <= max(5, total_count + 1)
+
+
+def ensure_policy_state(state):
+    changed = False
+    policy = state.setdefault("policy", {})
+    best = state["best"]
+    best["config"] = merge_config(best["config"], read_current_config())
+    best["description"] = config_description(best["config"])
+    normalized_seen = []
+    for fingerprint in state.get("seen", []):
+        normalized = config_fingerprint(merge_config(parse_fingerprint(fingerprint), best["config"]))
+        normalized_seen.append(normalized)
+    deduped_seen = ordered_unique(normalized_seen)
+    if deduped_seen != state.get("seen", []):
+        state["seen"] = deduped_seen
+        changed = True
+    best_fingerprint = config_fingerprint(best["config"])
+    anchor_val = policy.get("single_layer_anchor_val_bpb")
+    anchor_fingerprint = policy.get("single_layer_anchor_fingerprint")
+    if anchor_val is None or anchor_fingerprint is None:
+        policy["single_layer_anchor_val_bpb"] = best["val_bpb"]
+        policy["single_layer_anchor_fingerprint"] = best_fingerprint
+        changed = True
+    elif anchor_val - best["val_bpb"] >= SIGNIFICANT_SINGLE_LAYER_GAIN and anchor_fingerprint != best_fingerprint:
+        policy["single_layer_anchor_val_bpb"] = best["val_bpb"]
+        policy["single_layer_anchor_fingerprint"] = best_fingerprint
+        changed = True
+    return changed
+
+
+def single_layer_stalled(state):
+    policy = state.setdefault("policy", {})
+    anchor_val = policy.get("single_layer_anchor_val_bpb", state["best"]["val_bpb"])
+    return (anchor_val - state["best"]["val_bpb"]) < SIGNIFICANT_SINGLE_LAYER_GAIN
+
+
 def save_state(state):
     STATE_PATH.write_text(json.dumps(state, indent=2) + "\n")
 
@@ -213,7 +322,10 @@ def write_best_summary(state):
         "",
     ]
     for key in CONFIG_KEYS:
-        lines.append(f"- `{key} = {best['config'][key]}`")
+        value = best["config"][key]
+        if key == "DIFF_ATTN_LAYER_MASK" and value == "":
+            value = "<last>"
+        lines.append(f"- `{key} = {value}`")
     BEST_PATH.write_text("\n".join(lines) + "\n")
 
 
@@ -277,6 +389,14 @@ def parse_metrics(log_text):
     return metrics
 
 
+def read_depth():
+    text = TRAIN_PATH.read_text()
+    match = re.search(r"^DEPTH = (.+)$", text, re.MULTILINE)
+    if not match:
+        raise RuntimeError("Could not find DEPTH in train.py")
+    return int(eval_literal(match.group(1).strip()))
+
+
 def run_experiment_once(config, attempt_idx):
     timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
     slug = make_slug(config)
@@ -329,64 +449,121 @@ def run_experiment(config):
     raise RuntimeError("run_experiment retry loop fell through unexpectedly")
 
 
-def curated_candidates(best):
+def primary_candidates(best):
     base = dict(best)
-    candidates = [
-        {**base, "DIFF_ATTN_LAMBDA_INIT": -2.25},
-        {**base, "DIFF_ATTN_LAMBDA_INIT": -1.75},
-        {**base, "DIFF_ATTN_WO_INIT_SCALE": 0.08},
-        {**base, "DIFF_ATTN_WO_INIT_SCALE": 0.12},
-        {**base, "DIFF_ATTN_LAMBDA_MAX": 0.75},
-        {**base, "DIFF_ATTN_LAMBDA_MAX": 0.5},
-        {**base, "TOTAL_BATCH_SIZE": 2**14},
-        {**base, "DIFF_ATTN_Q2_BLEND": 0.9},
-        {**base, "DIFF_ATTN_Q2_BLEND": 0.85},
-        {**base, "DIFF_ATTN_Q2_SCALE": 0.85},
-        {**base, "DIFF_ATTN_Q2_SCALE": 1.15},
-        {**base, "DIFF_ATTN_Y2_NORM": True},
-        {**base, "DIFF_ATTN_Y2_CENTER_HEADS": True},
-        {**base, "DIFF_ATTN_Y2_CENTER_HEADS": True, "DIFF_ATTN_Y2_NORM": True},
-        {**base, "DIFF_ATTN_Q2_SCALE": 0.85, "DIFF_ATTN_Y2_CENTER_HEADS": True},
-        {**base, "DIFF_ATTN_Q2_BLEND": 0.9, "DIFF_ATTN_Y2_NORM": True},
-        {**base, "DIFF_ATTN_LAST_LAYERS": 2},
-        {**base, "DIFF_ATTN_LAST_LAYERS": 2, "DIFF_ATTN_Q2_BLEND": 0.9},
-        {**base, "DIFF_ATTN_LAST_LAYERS": 2, "DIFF_ATTN_LAMBDA_MAX": 0.75},
-        {**base, "DIFF_ATTN_LAST_LAYERS": 2, "DIFF_ATTN_Y2_NORM": True},
-        {**base, "DIFF_ATTN_LAST_LAYERS": 1, "TOTAL_BATCH_SIZE": 2**14, "DIFF_ATTN_Q2_BLEND": 0.9},
-        {**base, "DIFF_ATTN_LAST_LAYERS": 1, "TOTAL_BATCH_SIZE": 2**14, "DIFF_ATTN_Y2_NORM": True},
-    ]
+    candidates = []
+    for lam in ordered_unique([value for value in PRIMARY_LAM_SWEEP if value != base["DIFF_ATTN_LAMBDA_INIT"]]):
+        candidates.append({**base, "DIFF_ATTN_LAMBDA_INIT": lam})
+    for lambda_max in PRIMARY_LAMBDA_MAX_SWEEP:
+        if lambda_max == base["DIFF_ATTN_LAMBDA_MAX"]:
+            continue
+        candidates.append({**base, "DIFF_ATTN_LAMBDA_MAX": lambda_max})
+    for q2_scale in PRIMARY_Q2_SCALE_SWEEP:
+        if q2_scale == base["DIFF_ATTN_Q2_SCALE"]:
+            continue
+        candidates.append({**base, "DIFF_ATTN_Q2_SCALE": q2_scale})
+    if not base["DIFF_ATTN_Y2_CENTER_HEADS"]:
+        candidates.append({**base, "DIFF_ATTN_Y2_CENTER_HEADS": True})
+    if not base["DIFF_ATTN_Y2_NORM"]:
+        candidates.append({**base, "DIFF_ATTN_Y2_NORM": True})
+    if not (base["DIFF_ATTN_Y2_CENTER_HEADS"] and base["DIFF_ATTN_Y2_NORM"]):
+        candidates.append({**base, "DIFF_ATTN_Y2_CENTER_HEADS": True, "DIFF_ATTN_Y2_NORM": True})
     return dedupe_candidates(candidates)
 
 
-def mutate_candidate(best, rng):
+def mild_q2_scale_candidates(best):
+    current = float(best["DIFF_ATTN_Q2_SCALE"])
+    values = []
+    for factor in [0.95, 1.05, 0.9, 1.1]:
+        value = round(current * factor, 3)
+        value = max(0.5, min(1.5, value))
+        values.append(value)
+    return ordered_unique(value for value in values if value != current)
+
+
+def secondary_candidates(best):
+    base = dict(best)
+    candidates = []
+    for q2_scale in mild_q2_scale_candidates(base):
+        candidates.append({**base, "DIFF_ATTN_Q2_SCALE": q2_scale})
+
+    capped_lambda_max = min(float(base["DIFF_ATTN_LAMBDA_MAX"]), 0.75)
+    for init_scale in [0.05, 0.1]:
+        candidates.append(
+            {
+                **base,
+                "DIFF_ATTN_LAMBDA_MAX": capped_lambda_max,
+                "DIFF_ATTN_LAMBDA_WEIGHT_INIT": "small_random",
+                "DIFF_ATTN_LAMBDA_WEIGHT_INIT_SCALE": init_scale,
+            }
+        )
+
+    depth = read_depth()
+    sparse_masks = []
+    if depth >= 3:
+        sparse_masks.append(str(depth - 2))
+    for layer_mask in ordered_unique(mask for mask in sparse_masks if mask != base["DIFF_ATTN_LAYER_MASK"]):
+        candidates.append(set_diff_layers(base, layer_mask=layer_mask))
+    return dedupe_candidates(candidates)
+
+
+def expensive_candidates(best):
+    base = dict(best)
+    candidates = [
+        set_diff_layers(base, last_layers=2),
+        {**base, "TOTAL_BATCH_SIZE": 2**14},
+        {**set_diff_layers(base, last_layers=2), "TOTAL_BATCH_SIZE": 2**14},
+    ]
+    depth = read_depth()
+    if depth >= 4:
+        candidates.append(set_diff_layers(base, layer_mask="1,3"))
+    return dedupe_candidates(candidates)
+
+
+def mutate_candidate(best, rng, allow_expensive):
     candidate = dict(best)
-    knobs = rng.sample(
-        [
-            "DIFF_ATTN_LAST_LAYERS",
-            "DIFF_ATTN_LAMBDA_INIT",
-            "DIFF_ATTN_WO_INIT_SCALE",
-            "DIFF_ATTN_LAMBDA_MAX",
-            "DIFF_ATTN_Q2_BLEND",
-            "DIFF_ATTN_Q2_SCALE",
-            "DIFF_ATTN_Y2_NORM",
-            "DIFF_ATTN_Y2_CENTER_HEADS",
-            "TOTAL_BATCH_SIZE",
-        ],
-        k=rng.randint(1, 3),
-    )
+    knobs = [
+        "DIFF_ATTN_LAMBDA_INIT",
+        "DIFF_ATTN_WO_INIT_SCALE",
+        "DIFF_ATTN_LAMBDA_MAX",
+        "DIFF_ATTN_Q2_BLEND",
+        "DIFF_ATTN_Q2_SCALE",
+        "DIFF_ATTN_Y2_NORM",
+        "DIFF_ATTN_Y2_CENTER_HEADS",
+        "DIFF_ATTN_LAMBDA_WEIGHT_INIT",
+    ]
+    if allow_expensive:
+        knobs.extend(["DIFF_ATTN_LAST_LAYERS", "TOTAL_BATCH_SIZE", "DIFF_ATTN_LAYER_MASK"])
+    knob_count = rng.randint(1, 3)
+    knobs = rng.sample(knobs, k=min(knob_count, len(knobs)))
     for knob in knobs:
         if knob == "DIFF_ATTN_LAST_LAYERS":
-            candidate[knob] = rng.choice([1, 2])
+            candidate = set_diff_layers(candidate, last_layers=rng.choice([1, 2]))
+        elif knob == "DIFF_ATTN_LAYER_MASK":
+            depth = read_depth()
+            options = [""]
+            if depth >= 3:
+                options.append(str(depth - 2))
+            if depth >= 4:
+                options.append("1,3")
+            candidate = set_diff_layers(candidate, layer_mask=rng.choice(options))
         elif knob == "DIFF_ATTN_LAMBDA_INIT":
             candidate[knob] = rng.choice([-2.5, -2.25, -2.0, -1.85, -1.75, -1.6])
         elif knob == "DIFF_ATTN_WO_INIT_SCALE":
             candidate[knob] = rng.choice([0.05, 0.08, 0.1, 0.12, 0.15])
         elif knob == "DIFF_ATTN_LAMBDA_MAX":
             candidate[knob] = rng.choice([0.5, 0.65, 0.75, 0.9, 1.0])
+        elif knob == "DIFF_ATTN_LAMBDA_WEIGHT_INIT":
+            if rng.choice([False, True]):
+                candidate["DIFF_ATTN_LAMBDA_WEIGHT_INIT"] = "small_random"
+                candidate["DIFF_ATTN_LAMBDA_WEIGHT_INIT_SCALE"] = rng.choice([0.03, 0.05, 0.1])
+                candidate["DIFF_ATTN_LAMBDA_MAX"] = min(candidate["DIFF_ATTN_LAMBDA_MAX"], 0.75)
+            else:
+                candidate["DIFF_ATTN_LAMBDA_WEIGHT_INIT"] = "zero"
         elif knob == "DIFF_ATTN_Q2_BLEND":
             candidate[knob] = rng.choice([1.0, 0.95, 0.9, 0.85, 0.75])
         elif knob == "DIFF_ATTN_Q2_SCALE":
-            candidate[knob] = rng.choice([0.75, 0.85, 1.0, 1.15, 1.25])
+            candidate[knob] = rng.choice([0.75, 0.85, 0.95, 1.0, 1.05, 1.15, 1.25])
         elif knob == "DIFF_ATTN_Y2_NORM":
             candidate[knob] = rng.choice([False, True])
         elif knob == "DIFF_ATTN_Y2_CENTER_HEADS":
@@ -408,16 +585,36 @@ def dedupe_candidates(candidates):
     return unique
 
 
-def next_candidate(state, rng):
-    best = state["best"]["config"]
-    seen = set(state["seen"])
-    for candidate in curated_candidates(best):
+def first_unseen(candidates, seen):
+    for candidate in candidates:
         fingerprint = config_fingerprint(candidate)
         if fingerprint not in seen:
             return candidate
+    return None
+
+
+def next_candidate(state, rng):
+    ensure_policy_state(state)
+    best = state["best"]["config"]
+    seen = set(state["seen"])
+    for candidate_group in [primary_candidates(best), secondary_candidates(best)]:
+        candidate = first_unseen(candidate_group, seen)
+        if candidate is not None:
+            return candidate
+
+    stalled = single_layer_stalled(state)
+    if stalled:
+        candidate = first_unseen(expensive_candidates(best), seen)
+        if candidate is not None and expensive_budget_available(state):
+            return candidate
+
     for _ in range(256):
-        candidate = mutate_candidate(best, rng)
+        candidate = mutate_candidate(best, rng, allow_expensive=stalled and expensive_budget_available(state))
         fingerprint = config_fingerprint(candidate)
+        if not stalled and is_expensive(candidate):
+            continue
+        if stalled and is_expensive(candidate) and not expensive_budget_available(state):
+            continue
         if fingerprint not in seen:
             return candidate
     raise RuntimeError("Candidate generator exhausted unexpectedly")
@@ -439,8 +636,10 @@ def main():
     acquire_lock()
     state = load_state()
     state["best"]["config"] = merge_config(state["best"]["config"], current_config)
+    state["best"]["description"] = config_description(state["best"]["config"])
     if "deadline_at" not in state or not state["deadline_at"]:
         state["deadline_at"] = (datetime.now() + timedelta(hours=args.hours)).isoformat(timespec="seconds")
+    ensure_policy_state(state)
     save_state(state)
 
     PID_PATH.write_text(str(os.getpid()) + "\n")

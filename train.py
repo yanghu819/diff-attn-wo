@@ -30,11 +30,14 @@ class GPTConfig:
     window_pattern: str = "SSSL"
     use_diff_attn: bool = False
     diff_attn_last_layers: int = 0
+    diff_attn_layer_mask: str = ""
     diff_attn_q2_source: str = "wo"
     diff_attn_lambda_init: float = -2.0
     diff_attn_wo_init: str = "zero"
     diff_attn_wo_init_scale: float = 0.1
     diff_attn_lambda_max: float = 1.0
+    diff_attn_lambda_weight_init: str = "zero"
+    diff_attn_lambda_weight_init_scale: float = 0.05
     diff_attn_q2_blend: float = 1.0
     diff_attn_q2_scale: float = 1.0
     diff_attn_y2_norm: bool = False
@@ -48,6 +51,32 @@ def norm(x):
 def has_ve(layer_idx, n_layer):
     """Returns True if layer should have Value Embedding (alternating, last always included)."""
     return layer_idx % 2 == (n_layer - 1) % 2
+
+
+def parse_diff_attn_layer_mask(mask, n_layer):
+    mask = mask.strip()
+    if not mask:
+        return None
+    layers = set()
+    for piece in mask.split(","):
+        piece = piece.strip()
+        if not piece:
+            continue
+        layer_idx = int(piece)
+        if layer_idx < 0:
+            layer_idx += n_layer
+        if layer_idx < 0 or layer_idx >= n_layer:
+            raise ValueError(f"Invalid diff attention layer index {piece} for n_layer={n_layer}")
+        layers.add(layer_idx)
+    return frozenset(sorted(layers))
+
+
+def get_diff_attn_layers(config):
+    layer_mask = parse_diff_attn_layer_mask(config.diff_attn_layer_mask, config.n_layer)
+    if layer_mask is not None:
+        return layer_mask
+    start = max(0, config.n_layer - config.diff_attn_last_layers)
+    return frozenset(range(start, config.n_layer))
 
 
 def create_additive_causal_mask(seq_len, dtype=mx.float32):
@@ -74,7 +103,7 @@ class CausalSelfAttention(nn.Module):
         self.n_head = config.n_head
         self.n_kv_head = config.n_kv_head
         self.n_embd = config.n_embd
-        self.use_diff_attn = config.use_diff_attn and layer_idx >= config.n_layer - config.diff_attn_last_layers
+        self.use_diff_attn = config.use_diff_attn and layer_idx in get_diff_attn_layers(config)
         self.diff_attn_q2_source = config.diff_attn_q2_source
         self.diff_attn_lambda_max = config.diff_attn_lambda_max
         self.diff_attn_q2_blend = config.diff_attn_q2_blend
@@ -214,7 +243,16 @@ class GPT(nn.Module):
             else:
                 block.attn.c_proj.weight = mx.zeros_like(block.attn.c_proj.weight).astype(mx.bfloat16)
             if block.attn.diff_lambda is not None:
-                block.attn.diff_lambda.weight = mx.zeros_like(block.attn.diff_lambda.weight).astype(mx.bfloat16)
+                if self.config.diff_attn_lambda_weight_init == "small_random":
+                    block.attn.diff_lambda.weight = (
+                        mx.random.uniform(
+                            -self.config.diff_attn_lambda_weight_init_scale * scale,
+                            self.config.diff_attn_lambda_weight_init_scale * scale,
+                            block.attn.diff_lambda.weight.shape,
+                        )
+                    ).astype(mx.bfloat16)
+                else:
+                    block.attn.diff_lambda.weight = mx.zeros_like(block.attn.diff_lambda.weight).astype(mx.bfloat16)
                 block.attn.diff_lambda.bias = mx.full(
                     block.attn.diff_lambda.bias.shape,
                     self.config.diff_attn_lambda_init,
@@ -425,11 +463,14 @@ WINDOW_PATTERN = "SSSL"
 # Best diff-attn run on this machine so far uses q2=wo with small-random W_o init and TOTAL_BATCH_SIZE=2**15.
 USE_DIFF_ATTN = True
 DIFF_ATTN_LAST_LAYERS = 1
+DIFF_ATTN_LAYER_MASK = ""
 DIFF_ATTN_Q2_SOURCE = "wo"
 DIFF_ATTN_LAMBDA_INIT = -2.25
 DIFF_ATTN_WO_INIT = "small_random"
 DIFF_ATTN_WO_INIT_SCALE = 0.12
 DIFF_ATTN_LAMBDA_MAX = 1.0
+DIFF_ATTN_LAMBDA_WEIGHT_INIT = "zero"
+DIFF_ATTN_LAMBDA_WEIGHT_INIT_SCALE = 0.05
 DIFF_ATTN_Q2_BLEND = 1.0
 DIFF_ATTN_Q2_SCALE = 1.0
 DIFF_ATTN_Y2_NORM = False
@@ -504,11 +545,14 @@ config = GPTConfig(
     window_pattern=WINDOW_PATTERN,
     use_diff_attn=USE_DIFF_ATTN,
     diff_attn_last_layers=DIFF_ATTN_LAST_LAYERS,
+    diff_attn_layer_mask=DIFF_ATTN_LAYER_MASK,
     diff_attn_q2_source=DIFF_ATTN_Q2_SOURCE,
     diff_attn_lambda_init=DIFF_ATTN_LAMBDA_INIT,
     diff_attn_wo_init=DIFF_ATTN_WO_INIT,
     diff_attn_wo_init_scale=DIFF_ATTN_WO_INIT_SCALE,
     diff_attn_lambda_max=DIFF_ATTN_LAMBDA_MAX,
+    diff_attn_lambda_weight_init=DIFF_ATTN_LAMBDA_WEIGHT_INIT,
+    diff_attn_lambda_weight_init_scale=DIFF_ATTN_LAMBDA_WEIGHT_INIT_SCALE,
     diff_attn_q2_blend=DIFF_ATTN_Q2_BLEND,
     diff_attn_q2_scale=DIFF_ATTN_Q2_SCALE,
     diff_attn_y2_norm=DIFF_ATTN_Y2_NORM,
@@ -633,10 +677,13 @@ print(f"num_params_M:     {num_params / 1e6:.1f}")
 print(f"depth:            {DEPTH}")
 print(f"diff_attn:        {USE_DIFF_ATTN}")
 print(f"diff_last_layers: {DIFF_ATTN_LAST_LAYERS}")
+print(f"diff_layer_mask:  {DIFF_ATTN_LAYER_MASK or '<last>'}")
 print(f"diff_q2_source:   {DIFF_ATTN_Q2_SOURCE}")
 print(f"diff_wo_init:     {DIFF_ATTN_WO_INIT}")
 print(f"diff_wo_scale:    {DIFF_ATTN_WO_INIT_SCALE}")
 print(f"diff_lam_max:     {DIFF_ATTN_LAMBDA_MAX}")
+print(f"diff_lam_w_init:  {DIFF_ATTN_LAMBDA_WEIGHT_INIT}")
+print(f"diff_lam_w_scale: {DIFF_ATTN_LAMBDA_WEIGHT_INIT_SCALE}")
 print(f"diff_q2_blend:    {DIFF_ATTN_Q2_BLEND}")
 print(f"diff_q2_scale:    {DIFF_ATTN_Q2_SCALE}")
 print(f"diff_y2_norm:     {DIFF_ATTN_Y2_NORM}")
