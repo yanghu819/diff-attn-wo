@@ -1,7 +1,7 @@
 {
   "started_at": "2026-03-09T21:19:37",
   "deadline_at": "2026-03-10T07:19:37",
-  "run_count": 1,
+  "run_count": 2,
   "best": {
     "val_bpb": 2.078972,
     "memory_gb": 11.3,
@@ -20,17 +20,18 @@
     "description": "layers=1, lam=-2.0, wo_scale=0.1, blend=1.0, y2norm=False, batch=2**15"
   },
   "seen": [
-    "USE_DIFF_ATTN=True|DIFF_ATTN_LAST_LAYERS=1|DIFF_ATTN_Q2_SOURCE=wo|DIFF_ATTN_LAMBDA_INIT=-2.25|DIFF_ATTN_WO_INIT=small_random|DIFF_ATTN_WO_INIT_SCALE=0.1|DIFF_ATTN_Q2_BLEND=1.0|DIFF_ATTN_Y2_NORM=False|TOTAL_BATCH_SIZE=32768"
+    "USE_DIFF_ATTN=True|DIFF_ATTN_LAST_LAYERS=1|DIFF_ATTN_Q2_SOURCE=wo|DIFF_ATTN_LAMBDA_INIT=-2.25|DIFF_ATTN_WO_INIT=small_random|DIFF_ATTN_WO_INIT_SCALE=0.1|DIFF_ATTN_Q2_BLEND=1.0|DIFF_ATTN_Y2_NORM=False|TOTAL_BATCH_SIZE=32768",
+    "USE_DIFF_ATTN=True|DIFF_ATTN_LAST_LAYERS=1|DIFF_ATTN_Q2_SOURCE=wo|DIFF_ATTN_LAMBDA_INIT=-1.75|DIFF_ATTN_WO_INIT=small_random|DIFF_ATTN_WO_INIT_SCALE=0.1|DIFF_ATTN_Q2_BLEND=1.0|DIFF_ATTN_Y2_NORM=False|TOTAL_BATCH_SIZE=32768"
   ],
   "last_result": {
-    "timestamp": "20260309_212135",
+    "timestamp": "20260309_212946",
     "status": "discard",
-    "description": "layers=1, lam=-2.25, wo_scale=0.1, blend=1.0, y2norm=False, batch=2**15",
-    "log_path": "research/runs/20260309_212135_l1_lamm2p25_wo0p1_b1p0_n0_tb32768.log",
+    "description": "layers=1, lam=-1.75, wo_scale=0.1, blend=1.0, y2norm=False, batch=2**15",
+    "log_path": "research/runs/20260309_212946_l1_lamm1p75_wo0p1_b1p0_n0_tb32768.log",
     "metrics": {
-      "val_bpb": 2.108036,
+      "val_bpb": 2.348304,
       "memory_gb": 11.33876953125,
-      "num_steps": 150
+      "num_steps": 80
     }
   }
 }
