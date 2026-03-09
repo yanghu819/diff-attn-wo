@@ -9,7 +9,7 @@ HOURS=${1:-10}
 
 mkdir -p "$LOG_DIR"
 
-if screen -ls | grep -q "[.]$SESSION_NAME[[:space:]]"; then
+if screen -ls | /usr/bin/grep -qF ".$SESSION_NAME"; then
   echo "session $SESSION_NAME is already active"
   exit 1
 fi
