@@ -27,13 +27,18 @@ CONFIG_KEYS = [
     "DIFF_ATTN_LAMBDA_INIT",
     "DIFF_ATTN_WO_INIT",
     "DIFF_ATTN_WO_INIT_SCALE",
+    "DIFF_ATTN_LAMBDA_MAX",
     "DIFF_ATTN_Q2_BLEND",
+    "DIFF_ATTN_Q2_SCALE",
     "DIFF_ATTN_Y2_NORM",
+    "DIFF_ATTN_Y2_CENTER_HEADS",
     "TOTAL_BATCH_SIZE",
 ]
 
 DEFAULT_BEST_VAL_BPB = 2.078972
 RUN_TIMEOUT_SECONDS = 15 * 60
+MAX_COMPILE_SECONDS = 10.0
+MAX_COMPILE_RETRIES = 1
 
 
 def now_iso():
@@ -90,6 +95,12 @@ def write_config(config):
     TRAIN_PATH.write_text(text)
 
 
+def merge_config(config, fallback):
+    merged = dict(fallback)
+    merged.update(config)
+    return {key: merged[key] for key in CONFIG_KEYS}
+
+
 def config_fingerprint(config):
     parts = [f"{key}={config[key]}" for key in CONFIG_KEYS]
     return "|".join(parts)
@@ -101,8 +112,11 @@ def config_description(config):
         f"layers={config['DIFF_ATTN_LAST_LAYERS']}",
         f"lam={config['DIFF_ATTN_LAMBDA_INIT']}",
         f"wo_scale={config['DIFF_ATTN_WO_INIT_SCALE']}",
+        f"lam_max={config['DIFF_ATTN_LAMBDA_MAX']}",
         f"blend={config['DIFF_ATTN_Q2_BLEND']}",
+        f"q2_scale={config['DIFF_ATTN_Q2_SCALE']}",
         f"y2norm={config['DIFF_ATTN_Y2_NORM']}",
+        f"y2center={config['DIFF_ATTN_Y2_CENTER_HEADS']}",
         f"batch=2**{batch_power}",
     ]
     return ", ".join(pieces)
@@ -113,8 +127,11 @@ def make_slug(config):
         f"l{config['DIFF_ATTN_LAST_LAYERS']}"
         f"_lam{str(config['DIFF_ATTN_LAMBDA_INIT']).replace('.', 'p').replace('-', 'm')}"
         f"_wo{str(config['DIFF_ATTN_WO_INIT_SCALE']).replace('.', 'p')}"
+        f"_lm{str(config['DIFF_ATTN_LAMBDA_MAX']).replace('.', 'p')}"
         f"_b{str(config['DIFF_ATTN_Q2_BLEND']).replace('.', 'p')}"
+        f"_qs{str(config['DIFF_ATTN_Q2_SCALE']).replace('.', 'p')}"
         f"_n{int(config['DIFF_ATTN_Y2_NORM'])}"
+        f"_c{int(config['DIFF_ATTN_Y2_CENTER_HEADS'])}"
         f"_tb{config['TOTAL_BATCH_SIZE']}"
     )
 
@@ -216,7 +233,10 @@ def git_push():
 
 
 def parse_metrics(log_text):
-    metrics = {"val_bpb": None, "memory_gb": None, "num_steps": None}
+    metrics = {"val_bpb": None, "memory_gb": None, "num_steps": None, "compile_seconds": None}
+    match = re.search(r"^Model compiled in ([0-9.]+)s$", log_text, re.MULTILINE)
+    if match:
+        metrics["compile_seconds"] = float(match.group(1))
     match = re.search(r"^val_bpb:\s+([0-9.]+)$", log_text, re.MULTILINE)
     if match:
         metrics["val_bpb"] = float(match.group(1))
@@ -229,10 +249,11 @@ def parse_metrics(log_text):
     return metrics
 
 
-def run_experiment(config):
+def run_experiment_once(config, attempt_idx):
     timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
     slug = make_slug(config)
-    log_path = RUNS_DIR / f"{timestamp}_{slug}.log"
+    suffix = "" if attempt_idx == 0 else f"_retry{attempt_idx}"
+    log_path = RUNS_DIR / f"{timestamp}_{slug}{suffix}.log"
     write_config(config)
     cmd = ["uv", "run", "train.py"]
     started_at = now_iso()
@@ -265,6 +286,21 @@ def run_experiment(config):
     }
 
 
+def run_experiment(config):
+    for attempt_idx in range(MAX_COMPILE_RETRIES + 1):
+        result = run_experiment_once(config, attempt_idx)
+        compile_seconds = result["metrics"]["compile_seconds"]
+        if compile_seconds is None or compile_seconds <= MAX_COMPILE_SECONDS:
+            return result
+        if attempt_idx >= MAX_COMPILE_RETRIES:
+            return result
+        print(
+            f"[runner] retrying {result['description']} because compile took {compile_seconds:.1f}s",
+            flush=True,
+        )
+    raise RuntimeError("run_experiment retry loop fell through unexpectedly")
+
+
 def curated_candidates(best):
     base = dict(best)
     candidates = [
@@ -272,13 +308,21 @@ def curated_candidates(best):
         {**base, "DIFF_ATTN_LAMBDA_INIT": -1.75},
         {**base, "DIFF_ATTN_WO_INIT_SCALE": 0.08},
         {**base, "DIFF_ATTN_WO_INIT_SCALE": 0.12},
+        {**base, "DIFF_ATTN_LAMBDA_MAX": 0.75},
+        {**base, "DIFF_ATTN_LAMBDA_MAX": 0.5},
         {**base, "TOTAL_BATCH_SIZE": 2**14},
         {**base, "DIFF_ATTN_Q2_BLEND": 0.9},
         {**base, "DIFF_ATTN_Q2_BLEND": 0.85},
+        {**base, "DIFF_ATTN_Q2_SCALE": 0.85},
+        {**base, "DIFF_ATTN_Q2_SCALE": 1.15},
         {**base, "DIFF_ATTN_Y2_NORM": True},
+        {**base, "DIFF_ATTN_Y2_CENTER_HEADS": True},
+        {**base, "DIFF_ATTN_Y2_CENTER_HEADS": True, "DIFF_ATTN_Y2_NORM": True},
+        {**base, "DIFF_ATTN_Q2_SCALE": 0.85, "DIFF_ATTN_Y2_CENTER_HEADS": True},
         {**base, "DIFF_ATTN_Q2_BLEND": 0.9, "DIFF_ATTN_Y2_NORM": True},
         {**base, "DIFF_ATTN_LAST_LAYERS": 2},
         {**base, "DIFF_ATTN_LAST_LAYERS": 2, "DIFF_ATTN_Q2_BLEND": 0.9},
+        {**base, "DIFF_ATTN_LAST_LAYERS": 2, "DIFF_ATTN_LAMBDA_MAX": 0.75},
         {**base, "DIFF_ATTN_LAST_LAYERS": 2, "DIFF_ATTN_Y2_NORM": True},
         {**base, "DIFF_ATTN_LAST_LAYERS": 1, "TOTAL_BATCH_SIZE": 2**14, "DIFF_ATTN_Q2_BLEND": 0.9},
         {**base, "DIFF_ATTN_LAST_LAYERS": 1, "TOTAL_BATCH_SIZE": 2**14, "DIFF_ATTN_Y2_NORM": True},
@@ -293,8 +337,11 @@ def mutate_candidate(best, rng):
             "DIFF_ATTN_LAST_LAYERS",
             "DIFF_ATTN_LAMBDA_INIT",
             "DIFF_ATTN_WO_INIT_SCALE",
+            "DIFF_ATTN_LAMBDA_MAX",
             "DIFF_ATTN_Q2_BLEND",
+            "DIFF_ATTN_Q2_SCALE",
             "DIFF_ATTN_Y2_NORM",
+            "DIFF_ATTN_Y2_CENTER_HEADS",
             "TOTAL_BATCH_SIZE",
         ],
         k=rng.randint(1, 3),
@@ -306,9 +353,15 @@ def mutate_candidate(best, rng):
             candidate[knob] = rng.choice([-2.5, -2.25, -2.0, -1.85, -1.75, -1.6])
         elif knob == "DIFF_ATTN_WO_INIT_SCALE":
             candidate[knob] = rng.choice([0.05, 0.08, 0.1, 0.12, 0.15])
+        elif knob == "DIFF_ATTN_LAMBDA_MAX":
+            candidate[knob] = rng.choice([0.5, 0.65, 0.75, 0.9, 1.0])
         elif knob == "DIFF_ATTN_Q2_BLEND":
             candidate[knob] = rng.choice([1.0, 0.95, 0.9, 0.85, 0.75])
+        elif knob == "DIFF_ATTN_Q2_SCALE":
+            candidate[knob] = rng.choice([0.75, 0.85, 1.0, 1.15, 1.25])
         elif knob == "DIFF_ATTN_Y2_NORM":
+            candidate[knob] = rng.choice([False, True])
+        elif knob == "DIFF_ATTN_Y2_CENTER_HEADS":
             candidate[knob] = rng.choice([False, True])
         elif knob == "TOTAL_BATCH_SIZE":
             candidate[knob] = rng.choice([2**14, 2**15])
@@ -356,9 +409,10 @@ def main():
     current_config = read_current_config()
     ensure_research_files(current_config)
     state = load_state()
+    state["best"]["config"] = merge_config(state["best"]["config"], current_config)
     if "deadline_at" not in state or not state["deadline_at"]:
         state["deadline_at"] = (datetime.now() + timedelta(hours=args.hours)).isoformat(timespec="seconds")
-        save_state(state)
+    save_state(state)
 
     PID_PATH.write_text(str(os.getpid()) + "\n")
     rng = random.Random(args.seed)
@@ -431,6 +485,10 @@ def main():
             )
             state = load_state()
     finally:
+        try:
+            write_config(load_state()["best"]["config"])
+        except Exception:
+            pass
         PID_PATH.unlink(missing_ok=True)
 
 
