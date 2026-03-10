@@ -1,9 +1,9 @@
 # Current Best Diff-Attn Run
 
-- `val_bpb = 2.036343`
+- `val_bpb = 2.028910`
 - `memory_gb = 11.3`
-- `num_steps = 169`
-- `description = layers=1, mask=<last>, lam=-2.25, wo_scale=0.12, lam_max=1.0, lam_w_init=zero, lam_w_scale=0.05, blend=1.0, q2_scale=1.0, y2norm=False, y2center=False, batch=2**15`
+- `num_steps = 168`
+- `description = layers=1, mask=<last>, lam=-2.25, wo_scale=0.12, lam_max=0.75, lam_w_init=zero, lam_w_scale=0.05, blend=1.0, q2_scale=1.0, y2norm=False, y2center=False, batch=2**15`
 
 ## Config
 
@@ -14,7 +14,7 @@
 - `DIFF_ATTN_LAMBDA_INIT = -2.25`
 - `DIFF_ATTN_WO_INIT = small_random`
 - `DIFF_ATTN_WO_INIT_SCALE = 0.12`
-- `DIFF_ATTN_LAMBDA_MAX = 1.0`
+- `DIFF_ATTN_LAMBDA_MAX = 0.75`
 - `DIFF_ATTN_LAMBDA_WEIGHT_INIT = zero`
 - `DIFF_ATTN_LAMBDA_WEIGHT_INIT_SCALE = 0.05`
 - `DIFF_ATTN_Q2_BLEND = 1.0`
