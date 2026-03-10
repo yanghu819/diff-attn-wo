@@ -115,6 +115,34 @@ def eval_literal(source):
     return eval(source, {"__builtins__": {}}, {})
 
 
+def canonicalize_layer_mask(value):
+    if value in ("", None):
+        return ""
+    if isinstance(value, (tuple, list, set)):
+        parts = [str(int(item)) for item in value]
+    else:
+        parts = [piece.strip() for piece in str(value).split(",")]
+    cleaned = []
+    seen = set()
+    for piece in parts:
+        if not piece:
+            continue
+        normalized = str(int(piece))
+        if normalized in seen:
+            continue
+        seen.add(normalized)
+        cleaned.append(normalized)
+    return ",".join(cleaned)
+
+
+def canonicalize_config(config):
+    normalized = dict(config)
+    normalized["DIFF_ATTN_LAYER_MASK"] = canonicalize_layer_mask(normalized.get("DIFF_ATTN_LAYER_MASK", ""))
+    if normalized["DIFF_ATTN_LAYER_MASK"]:
+        normalized["DIFF_ATTN_LAST_LAYERS"] = 0
+    return normalized
+
+
 def read_current_config():
     text = TRAIN_PATH.read_text()
     config = {}
@@ -144,7 +172,8 @@ def write_config(config):
 def merge_config(config, fallback):
     merged = dict(fallback)
     merged.update(config)
-    return {key: merged[key] for key in CONFIG_KEYS}
+    merged = {key: merged[key] for key in CONFIG_KEYS}
+    return canonicalize_config(merged)
 
 
 def ordered_unique(items):
@@ -162,17 +191,18 @@ def ordered_unique(items):
 def set_diff_layers(config, last_layers=None, layer_mask=None):
     updated = dict(config)
     if layer_mask is not None:
-        updated["DIFF_ATTN_LAYER_MASK"] = layer_mask
-        if layer_mask:
+        updated["DIFF_ATTN_LAYER_MASK"] = canonicalize_layer_mask(layer_mask)
+        if updated["DIFF_ATTN_LAYER_MASK"]:
             updated["DIFF_ATTN_LAST_LAYERS"] = 0
     if last_layers is not None:
         updated["DIFF_ATTN_LAST_LAYERS"] = last_layers
         if last_layers > 0:
             updated["DIFF_ATTN_LAYER_MASK"] = ""
-    return updated
+    return canonicalize_config(updated)
 
 
 def config_fingerprint(config):
+    config = canonicalize_config(config)
     parts = [f"{key}={config[key]}" for key in CONFIG_KEYS]
     return "|".join(parts)
 
@@ -181,8 +211,11 @@ def parse_fingerprint(fingerprint):
     config = {}
     for piece in fingerprint.split("|"):
         key, value = piece.split("=", 1)
-        config[key] = parse_scalar_literal(value)
-    return config
+        if key == "DIFF_ATTN_LAYER_MASK":
+            config[key] = canonicalize_layer_mask(parse_scalar_literal(value))
+        else:
+            config[key] = parse_scalar_literal(value)
+    return canonicalize_config(config)
 
 
 def config_description(config):
