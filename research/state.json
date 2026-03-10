@@ -1,7 +1,7 @@
 {
   "started_at": "2026-03-09T21:19:37",
   "deadline_at": "2026-03-10T20:03:15",
-  "run_count": 41,
+  "run_count": 42,
   "best": {
     "val_bpb": 1.99537,
     "memory_gb": 11.3390625,
@@ -58,14 +58,14 @@
     "USE_DIFF_ATTN=True|DIFF_ATTN_LAST_LAYERS=0|DIFF_ATTN_LAYER_MASK=1,3|DIFF_ATTN_Q2_SOURCE=wo|DIFF_ATTN_LAMBDA_INIT=-1.75|DIFF_ATTN_WO_INIT=small_random|DIFF_ATTN_WO_INIT_SCALE=0.12|DIFF_ATTN_LAMBDA_MAX=0.75|DIFF_ATTN_LAMBDA_WEIGHT_INIT=zero|DIFF_ATTN_LAMBDA_WEIGHT_INIT_SCALE=0.05|DIFF_ATTN_Q2_BLEND=1.0|DIFF_ATTN_Q2_SCALE=1.0|DIFF_ATTN_Y2_NORM=False|DIFF_ATTN_Y2_CENTER_HEADS=False|TOTAL_BATCH_SIZE=32768"
   ],
   "last_result": {
-    "timestamp": "20260310_132122",
+    "timestamp": "20260310_132730",
     "status": "discard",
     "description": "layers=0, mask=1,3, lam=-1.75, wo_scale=0.12, lam_max=0.75, lam_w_init=zero, lam_w_scale=0.05, blend=1.0, q2_scale=1.0, y2norm=False, y2center=False, batch=2**15",
-    "log_path": "research/runs/20260310_132122_l0_mask1-3_lamm1p75_wo0p12_lm0p75_lwizero_lws0p05_b1p0_qs1p0_n0_c0_tb32768.log",
+    "log_path": "research/runs/20260310_132730_l0_mask1-3_lamm1p75_wo0p12_lm0p75_lwizero_lws0p05_b1p0_qs1p0_n0_c0_tb32768.log",
     "metrics": {
-      "val_bpb": 2.135141,
+      "val_bpb": 2.111287,
       "memory_gb": 11.933984375,
-      "num_steps": 153,
+      "num_steps": 154,
       "compile_seconds": 2.0
     }
   },
